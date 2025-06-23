@@ -1,0 +1,108 @@
+cmake_minimum_required (VERSION 2.8.5)
+cmake_policy(SET CMP0048 NEW)
+project (vid.stab C)
+
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules/")
+
+include (FindSSE)
+include (GNUInstallDirs)
+# include (ExternalProject) # There must be a nicer way to include this
+# include (sse2neon)
+find_package(OpenMP)
+
+set(MAJOR_VERSION 1)
+set(MINOR_VERSION 2)
+set(PATCH_VERSION 0)
+set(VIDSTAB_VERSION ${MAJOR_VERSION}.${MINOR_VERSION}${PATCH_VERSION})
+
+# Default to release builds if no explicit build type specified.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE "Release")
+endif()
+
+option(BUILD_SHARED_LIBS "build shared libraries instead of static libraries"
+       ON)
+
+option(USE_OMP "use parallelization use OMP" ON)
+
+set(CMAKE_C_STANDARD 99)
+
+# --- 修改后的代码 ---
+# 使用 if() 来判断编译器类型
+if(CMAKE_C_COMPILER_ID MATCHES "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
+  # 这些标志只对 GCC 和 Clang 有效
+  add_definitions(-Wall -Wno-pointer-sign)
+elseif(MSVC)
+  # 如果是 MSVC，我们可以添加等效的警告设置
+  # /W3 类似于 -Wall
+  # 我们通常不需要在这里禁用 MSVC 的特定警告，除非编译时真的报了
+  add_definitions(/W3)
+endif()
+
+if(NOT WIN32)
+  # -fPIC (Position-Independent Code) 在 Windows 上不需要，
+  # 因为 DLL 的机制不同。所以这个判断是正确的。
+  add_definitions(-fPIC)
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES AND NOT SSE2_FOUND)
+  add_definitions(-march=armv8-a+fp+simd+crypto+crc)
+endif()
+
+# here we should check for SSE2
+# our  -DUSE_SSE2_ASM code does not work with fpic
+if(SSE2_FOUND)
+add_definitions( -DUSE_SSE2 -msse2 -ffast-math )
+endif()
+
+if(USE_OMP AND OPENMP_FOUND)
+add_definitions(${OpenMP_C_FLAGS} -DUSE_OMP)
+endif()
+
+set(SOURCES src/frameinfo.c src/transformtype.c src/libvidstab.c
+  src/transform.c src/transformfixedpoint.c src/motiondetect.c
+  src/motiondetect_opt.c src/serialize.c src/localmotion2transform.c
+  src/boxblur.c src/vsvector.c)
+
+set(HEADERS src/frameinfo.h src/transformtype.h src/libvidstab.h
+  src/transform.h src/motiondetect.h src/serialize.h
+  src/localmotion2transform.h src/boxblur.h src/vsvector.h )
+
+
+# Create the vidstab library
+add_library (vidstab ${SOURCES})
+if(MSVC)
+  target_compile_definitions(vidstab PRIVATE VIDSTAB_EXPORTS)
+endif()
+target_include_directories(vidstab PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+)
+#set version of lib
+set_target_properties(vidstab PROPERTIES SOVERSION ${MAJOR_VERSION}.${MINOR_VERSION})
+
+if (NOT MSVC)
+  target_link_libraries(vidstab m)
+endif ()
+
+set(PKG_EXTRA_LIBS -lm)
+if(USE_OMP AND OPENMP_FOUND)
+if(TARGET OpenMP::OpenMP_C)
+target_link_libraries(vidstab OpenMP::OpenMP_C)
+endif()
+set(PKG_EXTRA_LIBS "${PKG_EXTRA_LIBS} ${OpenMP_C_FLAGS}")
+endif()
+
+
+#if(!NOHEADERS)
+FILE(GLOB HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h")
+INSTALL(FILES ${HEADERS} DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/vid.stab)
+#endif()
+
+INSTALL(TARGETS vidstab
+  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+)
+
+include(create_pkgconfig_file)
+create_pkgconfig_file(vidstab "Vid.Stab, a library for stabilizing video clips")
